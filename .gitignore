@@ -1,0 +1,34 @@
+# Bỏ qua thư viện của tất cả các thư mục con (frontend, backend)
+node_modules/
+dist/
+.pnp
+.pnp.js
+
+# Bỏ qua file môi trường (Bảo mật)
+.env
+.env.*
+*.pem
+
+# Log rác
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Cấu hình IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# File hệ điều hành
+.DS_Store
+Thumbs.db
