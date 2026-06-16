@@ -1,13 +1,13 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 
 import { User } from '../../user/entities/user.entity';
 import { PasswordResetToken } from '../entities/password-reset-token.entity';
-import { RedisService } from '../../../core/redis/redis.service';
 import { 
   ChangePasswordDto, 
   ForgotPasswordRequestDto, 
@@ -20,31 +20,29 @@ export class PasswordService {
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(PasswordResetToken) private readonly passwordResetTokenRepo: Repository<PasswordResetToken>,
-    private readonly redisService: RedisService,
-    private readonly eventEmitter: EventEmitter2,
+    @InjectQueue('email-tasks') private readonly emailQueue: Queue,
   ) {}
 
   async forgotPassword(request: ForgotPasswordRequestDto): Promise<void> {
     const user = await this.userRepository.findOne({ where: { email: request.email } });
     if (!user) throw new NotFoundException('Không tìm thấy tài khoản với email này.');
 
-    // Xóa token cũ
     await this.passwordResetTokenRepo.delete({ user: { id: user.id } });
 
     const resetToken = this.passwordResetTokenRepo.create({
       user,
       token: uuidv4(),
-      expiryDate: new Date(Date.now() + 15 * 60 * 1000) // 15 phút
+      expiryDate: new Date(Date.now() + 15 * 60 * 1000) 
     });
     await this.passwordResetTokenRepo.save(resetToken);
 
     const resetLink = `http://localhost:5173/reset-password?token=${resetToken.token}`;
     
-    this.eventEmitter.emit('email.send', {
+    await this.emailQueue.add('send-email', {
       to: user.email,
       subject: 'Yêu cầu đặt lại mật khẩu - MindRevol',
       content: `<p>Nhấp vào link để đặt lại mật khẩu (hiệu lực 15 phút): <a href="${resetLink}">${resetLink}</a></p>`,
-    });
+    }, { attempts: 3, backoff: 5000 });
   }
 
   async resetPassword(request: ResetPasswordRequestDto): Promise<void> {
@@ -94,7 +92,7 @@ export class PasswordService {
     }
 
     user.password = await bcrypt.hash(request.newPassword, 10);
-    user.authProvider = 'LOCAL'; // Gắn lại cờ thành có pass
+    user.authProvider = 'LOCAL'; 
     await this.userRepository.save(user);
   }
 }

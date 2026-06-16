@@ -1,16 +1,6 @@
 import { registerAs } from '@nestjs/config';
 
-export interface RedisConfigOptions {
-  host: string;
-  port: number;
-  password?: string;
-  db: number;
-}
-
-// Chú ý bắt buộc phải có chữ "default" ở đây
-export default registerAs('redis', (): RedisConfigOptions => ({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  password: process.env.REDIS_PASSWORD || undefined,
-  db: parseInt(process.env.REDIS_DB || '0', 10),
+export default registerAs('redis', () => ({
+  // Chỉ dùng URL duy nhất, xóa bỏ host, port lắt nhắt
+  url: process.env.REDIS_URL, 
 }));

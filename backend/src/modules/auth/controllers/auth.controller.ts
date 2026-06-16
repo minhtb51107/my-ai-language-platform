@@ -1,36 +1,37 @@
-import { Controller, Post, Body, Req, Get, Query } from '@nestjs/common';
+import { Controller, Post, Body, Req, Get, Query, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
+import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
 import { AuthService } from '../services/auth.service';
-import { 
-  LoginRequestDto, 
-  SendOtpRequestDto, 
-  VerifyOtpLoginDto 
-} from '../dto/auth.dto';
+import { LoginRequestDto, SendOtpRequestDto, VerifyOtpLoginDto } from '../dto/auth.dto';
 
+// Áp dụng Guard cho toàn bộ Controller
+@UseGuards(ThrottlerGuard)
 @Controller('api/v1/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  // --- TRADITIONAL & OTP LOGIN ---
+  @Throttle({ login: { limit: 5, ttl: 300000 } }) // 5 lần / 5 phút
   @Post('login')
   async login(@Body() dto: LoginRequestDto, @Req() req: Request) {
     const tokens = await this.authService.login(dto, req);
     return { message: 'Đăng nhập thành công', data: tokens };
   }
 
+  @Throttle({ otp: { limit: 1, ttl: 60000 } }) // 1 lần / 60 giây
   @Post('otp/send')
   async sendOtpLogin(@Body() dto: SendOtpRequestDto) {
     await this.authService.sendOtpLogin(dto);
     return { message: 'Mã OTP đăng nhập đã được gửi.' };
   }
 
+  @Throttle({ login: { limit: 5, ttl: 300000 } })
   @Post('otp/verify')
   async verifyOtpLogin(@Body() dto: VerifyOtpLoginDto, @Req() req: Request) {
     const tokens = await this.authService.verifyOtpLogin(dto, req);
     return { message: 'Đăng nhập thành công', data: tokens };
   }
 
-  // --- MAGIC LINK ---
+  // ... (giữ nguyên các endpoint Magic Link và Social Login)
   @Post('magic-link/send')
   async sendMagicLink(@Body('email') email: string) {
     await this.authService.sendMagicLink(email);
@@ -43,7 +44,6 @@ export class AuthController {
     return { message: 'Đăng nhập thành công', data: tokens };
   }
 
-  // --- SOCIAL LOGIN (Sử dụng Factory Pattern) ---
   @Post('social/google')
   async loginWithGoogle(@Body() requestData: any, @Req() req: Request) {
     const tokens = await this.authService.processUnifiedSocialLogin('google', requestData, req);

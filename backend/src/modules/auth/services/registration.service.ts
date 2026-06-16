@@ -1,7 +1,8 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import * as bcrypt from 'bcrypt';
 import { Request } from 'express';
 
@@ -22,7 +23,7 @@ export class RegistrationService {
     @InjectRepository(Role) private readonly roleRepository: Repository<Role>,
     private readonly redisService: RedisService,
     private readonly sessionService: SessionService,
-    private readonly eventEmitter: EventEmitter2,
+    @InjectQueue('email-tasks') private readonly emailQueue: Queue,
   ) {}
 
   async registerUserStep1(request: RegisterRequestDto): Promise<void> {
@@ -32,8 +33,8 @@ export class RegistrationService {
     const handleExists = await this.userRepository.exists({ where: { handle: request.handle } });
     if (handleExists) throw new BadRequestException(`Handle @${request.handle} đã tồn tại.`);
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // Sinh mã 6 số
-    const passwordHash = await bcrypt.hash(request.password, 10); // Hash mật khẩu ngay từ bước này
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); 
+    const passwordHash = await bcrypt.hash(request.password, 10);
 
     const tempData: RegisterTempData = {
       fullname: request.fullname,
@@ -49,12 +50,11 @@ export class RegistrationService {
     const redisKey = `${this.REG_TEMP_PREFIX}${request.email}`;
     await this.redisService.set(redisKey, JSON.stringify(tempData), this.REG_TEMP_TTL_SECONDS);
 
-    // Bắn event để worker/listener gửi email (thay cho AsyncTaskProducer)
-    this.eventEmitter.emit('email.send', {
+    await this.emailQueue.add('send-email', {
       to: request.email,
       subject: 'Xác thực đăng ký tài khoản MindRevol',
       content: `<p>Mã OTP của bạn là: <b>${otpCode}</b> (Hết hạn sau 10 phút)</p>`,
-    });
+    }, { attempts: 3, backoff: 5000 });
   }
 
   async verifyRegisterOtp(request: VerifyRegisterOtpDto, req: Request): Promise<{ accessToken: string; refreshToken: string }> {
@@ -77,7 +77,6 @@ export class RegistrationService {
       throw new BadRequestException(`Mã OTP không chính xác. Bạn còn ${6 - tempData.retryCount} lần thử.`);
     }
 
-    // Double check handle trước khi thực sự ghi vào DB
     const handleExists = await this.userRepository.exists({ where: { handle: tempData.handle } });
     if (handleExists) throw new BadRequestException(`Rất tiếc, Handle @${tempData.handle} vừa bị đăng ký. Chọn Handle khác.`);
 
@@ -103,7 +102,6 @@ export class RegistrationService {
     const savedUser = await this.userRepository.save(newUser);
     await this.redisService.del(redisKey);
 
-    // Khởi tạo phiên đăng nhập (JWT)
     return this.sessionService.createTokenAndSession(savedUser, req);
   }
 
@@ -121,10 +119,10 @@ export class RegistrationService {
 
     await this.redisService.set(redisKey, JSON.stringify(tempData), this.REG_TEMP_TTL_SECONDS);
 
-    this.eventEmitter.emit('email.send', {
+    await this.emailQueue.add('send-email', {
       to: email,
       subject: 'Gửi lại mã xác thực - MindRevol',
       content: `<p>Mã xác thực MỚI của bạn là: <b>${newOtp}</b></p>`,
-    });
+    }, { attempts: 3, backoff: 5000 });
   }
 }

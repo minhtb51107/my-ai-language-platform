@@ -3,12 +3,17 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { BullModule } from '@nestjs/bullmq';
+import Redis from 'ioredis';
 
 import databaseConfig from './config/database.config';
 import redisConfig from './config/redis.config';
+import { envValidationSchema } from './config/env.validation'; // <-- Import Schema mới
 import { RedisModule } from './core/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { DatabaseInitService } from './core/database.init.service';
+import { AiModule } from './modules/ai/ai.module';
+import { MemoryModule } from './modules/memory/memory.module';
+import { ChatModule } from './modules/chat/chat.module';
 
 @Module({
   imports: [
@@ -16,6 +21,7 @@ import { DatabaseInitService } from './core/database.init.service';
       isGlobal: true,
       load: [databaseConfig, redisConfig],
       envFilePath: '.env',
+      validationSchema: envValidationSchema, // <-- Ép NestJS kiểm tra file .env ngay khi bật server
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -23,11 +29,24 @@ import { DatabaseInitService } from './core/database.init.service';
       useFactory: (configService: ConfigService) => 
         configService.get<TypeOrmModuleOptions>('database')!,
     }),
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => {
+        const redisUrl = configService.get<string>('REDIS_URL') || process.env.REDIS_URL;
+        return {
+          connection: new Redis(redisUrl as string, { maxRetriesPerRequest: null }) as any,
+        };
+      },
+    }),
     ScheduleModule.forRoot(),
-    EventEmitterModule.forRoot(), // Kích hoạt Event Emitter cho luồng gửi Email
+    EventEmitterModule.forRoot(),
     RedisModule,
     AuthModule,
+    AiModule,
+    MemoryModule,
+    ChatModule,
   ],
-  providers: [DatabaseInitService], // Kích hoạt khởi tạo PgVector
+  providers: [],
 })
 export class AppModule {}

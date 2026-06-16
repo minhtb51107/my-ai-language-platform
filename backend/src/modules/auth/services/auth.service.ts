@@ -1,7 +1,8 @@
 import { Injectable, BadRequestException, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { Request } from 'express';
@@ -20,7 +21,6 @@ import { UserStatus, AccountType } from '../../user/user.enums';
 @Injectable()
 export class AuthService {
   private readonly OTP_PREFIX = 'auth:otp:code:';
-  private readonly OTP_LIMIT_PREFIX = 'auth:otp:limit:';
   private readonly OTP_RETRY_PREFIX = 'auth:otp:retry:';
 
   constructor(
@@ -31,10 +31,9 @@ export class AuthService {
     private readonly redisService: RedisService,
     private readonly sessionService: SessionService,
     private readonly socialLoginFactory: SocialLoginFactory,
-    private readonly eventEmitter: EventEmitter2,
+    @InjectQueue('email-tasks') private readonly emailQueue: Queue,
   ) {}
 
-  // --- TRADITIONAL LOGIN ---
   async login(request: LoginRequestDto, req: Request) {
     const user = await this.userRepository.createQueryBuilder('user')
       .where('user.email = :email', { email: request.email })
@@ -51,27 +50,22 @@ export class AuthService {
     return this.sessionService.createTokenAndSession(user, req);
   }
 
-  // --- OTP LOGIN ---
   async sendOtpLogin(request: SendOtpRequestDto): Promise<void> {
     const user = await this.userRepository.findOne({ where: { email: request.email } });
     if (!user) throw new NotFoundException('Email này chưa đăng ký tài khoản.');
 
-    const limitKey = `${this.OTP_LIMIT_PREFIX}${request.email}`;
-    const isLimited = await this.redisService.get(limitKey);
-    
-    if (isLimited) throw new BadRequestException('Vui lòng đợi 60 giây trước khi gửi lại mã.');
-
     const newCode = Math.floor(100000 + Math.random() * 900000).toString();
     const redisClient = this.redisService.getClient();
+    
     await redisClient.set(`${this.OTP_PREFIX}${request.email}`, newCode, 'EX', 300); 
     await redisClient.del(`${this.OTP_RETRY_PREFIX}${request.email}`);
-    await redisClient.set(limitKey, '1', 'EX', 60);
 
-    this.eventEmitter.emit('email.send', {
+    // Đẩy task gửi mail vào BullMQ
+    await this.emailQueue.add('send-email', {
       to: user.email,
       subject: 'Mã xác thực đăng nhập MindRevol',
       content: `<h1>Mã OTP của bạn: ${newCode}</h1><p>Hết hạn sau 5 phút.</p>`,
-    });
+    }, { attempts: 3, backoff: 5000 });
   }
 
   async verifyOtpLogin(request: VerifyOtpLoginDto, req: Request) {
@@ -97,11 +91,10 @@ export class AuthService {
       throw new BadRequestException(`Mã OTP không chính xác. (Sai ${retryCount + 1}/5 lần)`);
     }
 
-    await redisClient.del(otpKey, retryKey, `${this.OTP_LIMIT_PREFIX}${request.email}`);
+    await redisClient.del(otpKey, retryKey);
     return this.sessionService.createTokenAndSession(user, req);
   }
 
-  // --- MAGIC LINK LOGIN ---
   async sendMagicLink(email: string): Promise<void> {
     const user = await this.userRepository.findOne({ where: { email } });
     if (!user) throw new NotFoundException('Email chưa đăng ký');
@@ -110,11 +103,12 @@ export class AuthService {
     await this.magicLinkTokenRepo.save(magicToken);
 
     const link = `http://localhost:5173/magic-login?token=${magicToken.token}`;
-    this.eventEmitter.emit('email.send', {
+    
+    await this.emailQueue.add('send-email', {
       to: user.email,
       subject: 'Đăng nhập MindRevol bằng Magic Link',
       content: `<p>Nhấp vào link sau để đăng nhập: <a href="${link}">${link}</a></p>`,
-    });
+    }, { attempts: 3, backoff: 5000 });
   }
 
   async loginWithMagicLink(token: string, req: Request) {
@@ -133,7 +127,6 @@ export class AuthService {
     return this.sessionService.createTokenAndSession(magicToken.user, req);
   }
 
-  // --- SOCIAL LOGIN (STRATEGY IMPLEMENTATION) ---
   async processUnifiedSocialLogin(providerName: string, requestData: any, req: Request) {
     const strategy = this.socialLoginFactory.getStrategy(providerName);
     const data = await strategy.verifyAndGetData(requestData);
