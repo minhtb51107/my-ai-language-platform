@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # 🐘 PostgreSQL with pgvector for RAG
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: mindrevol-db
+    restart: always
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: rootpassword
+      POSTGRES_DB: mindrevol
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d mindrevol"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 🔴 Redis (Dành cho việc Cache, Throttle hoặc Queue)
+  redis:
+    image: redis:alpine
+    container_name: mindrevol-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
