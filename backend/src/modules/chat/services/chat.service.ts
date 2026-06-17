@@ -1,29 +1,27 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, MoreThanOrEqual } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 
 import { ChatSession } from '../entities/chat-session.entity';
 import { ChatMessage } from '../entities/chat-message.entity';
 import { MessageRole, SessionStatus } from '../chat.enums';
 import { OpenAIService } from '../../ai/llm/openai.service';
+import { ContextCompactionService } from './context-compaction.service';
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     @InjectRepository(ChatSession)
     private readonly chatSessionRepo: Repository<ChatSession>,
     @InjectRepository(ChatMessage)
     private readonly chatMessageRepo: Repository<ChatMessage>,
     private readonly openaiService: OpenAIService,
+    private readonly compactionService: ContextCompactionService, // Inject Service nén
   ) {}
 
-  // ==========================================
-  // PHẦN 1: CORE SERVICES (Dùng cho WebSocket & Agent)
-  // ==========================================
-
-  /**
-   * Lấy và xác thực quyền sở hữu của phiên chat
-   */
   async getValidSession(sessionId: string, userId: string): Promise<ChatSession> {
     const session = await this.chatSessionRepo.findOne({ 
       where: { id: sessionId },
@@ -31,109 +29,159 @@ export class ChatService {
     });
     
     if (!session) throw new NotFoundException('Không tìm thấy phiên chat này');
-    if (session.user.id !== userId) throw new ForbiddenException('Bạn không có quyền truy cập phiên chat này');
+    if (session.user.id !== userId) throw new ForbiddenException('Bạn không có quyền truy cập');
     
     return session;
   }
 
-  /**
-   * Lưu tin nhắn vào Database
-   */
-  async saveMessage(sessionId: string, role: MessageRole, content: string): Promise<ChatMessage> {
+  async saveMessage(sessionId: string, role: MessageRole, content: string, attachments?: any[]): Promise<ChatMessage> {
     const session = await this.chatSessionRepo.findOne({ where: { id: sessionId } });
-    if (!session) throw new NotFoundException('Không tìm thấy phiên chat này');
+    if (!session) throw new NotFoundException('Không tìm thấy phiên chat');
 
-    const message = this.chatMessageRepo.create({
-      session,
-      role,
-      content,
+    const message = this.chatMessageRepo.create({ 
+      session, role, content: content || '', attachments: attachments || [] 
     });
     
-    // Cập nhật lại thời gian updatedAt của ChatSession để đẩy nó lên đầu danh sách Sidebar
     session.updatedAt = new Date();
     await this.chatSessionRepo.save(session);
+    const savedMsg = await this.chatMessageRepo.save(message);
 
-    return this.chatMessageRepo.save(message);
+    // KÍCH HOẠT AUTO-SUMMARIZE NGẦM (Không await để không chặn luồng phản hồi)
+    this.checkAndSummarizeHistory(sessionId).catch(e => this.logger.error('Lỗi Auto-Summarize', e));
+
+    return savedMsg;
   }
 
-  /**
-   * Lấy lịch sử hội thoại chuẩn bị ngữ cảnh cho LLM/Agent (Đảo ngược thứ tự)
-   */
+  private async checkAndSummarizeHistory(sessionId: string) {
+    const count = await this.chatMessageRepo.count({ where: { session: { id: sessionId } } });
+    
+    // Đạt ngưỡng 20 tin nhắn thì gom 15 tin cũ nhất đi tóm tắt
+    if (count > 20) {
+      const messages = await this.chatMessageRepo.find({ 
+        where: { session: { id: sessionId } }, 
+        order: { created_at: 'ASC' } 
+      });
+
+      const messagesToCompact = messages.slice(0, 15);
+      const summaryContent = await this.compactionService.optimizeAndCompactContext(messagesToCompact, 'gpt-4o-mini');
+      
+      const summaryText = summaryContent.map(m => m.content).join('\n');
+
+      const oldMessageIds = messagesToCompact.map(m => m.id);
+      await this.chatMessageRepo.delete(oldMessageIds);
+
+      const summaryMessage = this.chatMessageRepo.create({
+        session: { id: sessionId },
+        role: MessageRole.SYSTEM,
+        content: `[TÓM TẮT LỊCH SỬ TRƯỚC ĐÓ - ĐÃ ĐƯỢC AI NÉN LẠI]:\n${summaryText}`
+      });
+      await this.chatMessageRepo.save(summaryMessage);
+      this.logger.log(`Đã nén thành công ${oldMessageIds.length} tin nhắn cũ của session ${sessionId}`);
+    }
+  }
+
   async getChatHistory(sessionId: string, limit: number): Promise<any[]> {
     const messages = await this.chatMessageRepo.find({
       where: { session: { id: sessionId } },
-      order: { createdAt: 'DESC' },
+      order: { created_at: 'DESC' },
       take: limit,
     });
-    
-    return messages.reverse().map(msg => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+    return messages.reverse().map(msg => ({ role: msg.role, content: msg.content, attachments: msg.attachments }));
   }
 
-  /**
-   * Xử lý luồng chat thô (Dùng cho Controller SSE cũ hoặc fallback)
-   */
-  async processUserMessage(message: string): Promise<AsyncIterable<string>> {
-    return this.openaiService.streamChat([{ role: 'user', content: message }]);
-  }
-
-  // ==========================================
-  // PHẦN 2: REST API SERVICES (Dùng cho Frontend Web/App)
-  // ==========================================
-
-  /**
-   * Tạo một phiên chat mới
-   */
   async createSession(userId: string, title: string): Promise<ChatSession> {
-    const newSession = this.chatSessionRepo.create({
-      title,
-      user: { id: userId },
-      status: SessionStatus.ACTIVE,
-    });
+    const newSession = this.chatSessionRepo.create({ title, user: { id: userId }, status: SessionStatus.ACTIVE });
     return this.chatSessionRepo.save(newSession);
   }
 
-  /**
-   * Lấy danh sách các đoạn chat để hiển thị Sidebar (Mới nhất xếp trên)
-   */
   async getUserSessions(userId: string): Promise<ChatSession[]> {
     return this.chatSessionRepo.find({
       where: { user: { id: userId }, status: SessionStatus.ACTIVE },
-      order: { updatedAt: 'DESC' }, 
+      order: { isPinned: 'DESC', updatedAt: 'DESC' }, 
     });
   }
 
-  /**
-   * Lấy toàn bộ lịch sử tin nhắn của một phiên chat cho Frontend render
-   */
   async getSessionMessagesForClient(sessionId: string, userId: string): Promise<ChatMessage[]> {
-    // 1. Kiểm tra xem user có phải chủ sở hữu không
     await this.getValidSession(sessionId, userId);
-    
-    // 2. Trả về toàn bộ tin nhắn theo thứ tự thời gian tăng dần
-    return this.chatMessageRepo.find({
-      where: { session: { id: sessionId } },
-      order: { createdAt: 'ASC' }, 
-    });
+    return this.chatMessageRepo.find({ where: { session: { id: sessionId } }, order: { created_at: 'ASC' } });
   }
 
-  /**
-   * Đổi tên tiêu đề của đoạn chat
-   */
-  async updateSessionTitle(sessionId: string, userId: string, newTitle: string): Promise<ChatSession> {
+  async updateSessionTitle(sessionId: string, userId: string, newTitle: string) {
     const session = await this.getValidSession(sessionId, userId);
     session.title = newTitle;
     return this.chatSessionRepo.save(session);
   }
 
-  /**
-   * Xóa hoàn toàn một phiên chat (Xóa cứng)
-   */
-  async deleteSession(sessionId: string, userId: string): Promise<void> {
+  async deleteSession(sessionId: string, userId: string) {
     const session = await this.getValidSession(sessionId, userId);
-    // Tính năng cascade on delete sẽ tự động xóa các ChatMessage liên quan
-    await this.chatSessionRepo.remove(session);
+    await this.chatSessionRepo.remove(session); 
+  }
+
+  async togglePinSession(sessionId: string, userId: string, isPinned: boolean) {
+    const session = await this.getValidSession(sessionId, userId);
+    session.isPinned = isPinned;
+    return this.chatSessionRepo.save(session);
+  }
+
+  async shareSession(sessionId: string, userId: string) {
+    const session = await this.getValidSession(sessionId, userId);
+    if (!session.shareToken) {
+      session.shareToken = uuidv4().replace(/-/g, '').substring(0, 12); 
+      await this.chatSessionRepo.save(session);
+    }
+    return session.shareToken;
+  }
+
+  async getSharedSession(shareToken: string) {
+    const session = await this.chatSessionRepo.findOne({
+      where: { shareToken, status: SessionStatus.ACTIVE },
+      relations: ['user']
+    });
+    if (!session) throw new NotFoundException('Đoạn chat không tồn tại hoặc đã bị tắt chia sẻ');
+    
+    const messages = await this.chatMessageRepo.find({
+      where: { session: { id: session.id } },
+      order: { created_at: 'ASC' } 
+    });
+
+    return {
+      sessionInfo: { title: session.title, ownerName: session.user.fullname, createdAt: session.createdAt },
+      messages
+    };
+  }
+
+  async rateMessage(messageId: string, rating: 'like' | 'dislike' | null) {
+    const message = await this.chatMessageRepo.findOne({ where: { id: messageId } });
+    if (!message) throw new NotFoundException('Không tìm thấy tin nhắn');
+    message.rating = rating;
+    return this.chatMessageRepo.save(message);
+  }
+
+  async truncateChatHistory(sessionId: string, messageId: string, userId: string) {
+    const session = await this.getValidSession(sessionId, userId);
+    const targetMsg = await this.chatMessageRepo.findOne({ where: { id: messageId, session: { id: sessionId } } });
+    
+    if (!targetMsg) throw new NotFoundException('Tin nhắn gốc không tồn tại');
+
+    // Tìm các tin nhắn sắp bị cắt
+    const messagesToArchive = await this.chatMessageRepo.find({
+      where: { 
+        session: { id: sessionId },
+        created_at: MoreThanOrEqual(targetMsg.created_at)
+      }
+    });
+
+    // Lưu mảng bị cắt vào metadata của session (như một nhánh backup)
+    const branchData = messagesToArchive.map(m => `[${m.role}] ${m.content}`).join('\n---\n');
+    session.metadata = {
+      ...session.metadata,
+      archivedBranches: [...(session.metadata?.archivedBranches || []), branchData]
+    };
+    await this.chatSessionRepo.save(session);
+
+    // Xóa các tin nhắn khỏi trục chính
+    await this.chatMessageRepo.delete(messagesToArchive.map(m => m.id));
+
+    return { success: true, message: 'Đã lưu nhánh và rẽ nhánh thành công' };
   }
 }

@@ -24,9 +24,9 @@ export class SemanticCacheService {
       const vectorString = `[${embedding.join(',')}]`;
 
       const sql = `
-        SELECT response, (1 - (promptEmbedding <=> $1)) as similarity
+        SELECT response, (1 - ("promptEmbedding" <=> $1)) as similarity
         FROM semantic_cache
-        WHERE 1 - (promptEmbedding <=> $1) >= $2
+        WHERE 1 - ("promptEmbedding" <=> $1) >= $2
         ORDER BY similarity DESC
         LIMIT 1
       `;

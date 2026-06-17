@@ -1,4 +1,4 @@
-import { IsString, IsUUID, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsString, IsUUID, IsNotEmpty, MaxLength, IsOptional, IsArray } from 'class-validator';
 
 export class ChatMessageDto {
   @IsUUID('all', { message: 'SessionId không đúng định dạng' })
@@ -6,7 +6,11 @@ export class ChatMessageDto {
   sessionId: string;
 
   @IsString()
-  @IsNotEmpty({ message: 'Tin nhắn không được để trống' })
-  @MaxLength(2000, { message: 'Tin nhắn không được vượt quá 2000 ký tự' })
-  message: string;
+  @IsOptional() // Có thể gửi mỗi hình ảnh mà không cần nhập text
+  @MaxLength(4000)
+  message?: string;
+
+  @IsOptional()
+  @IsArray()
+  attachments?: any[];
 }

@@ -1,31 +1,47 @@
-import { Injectable } from '@nestjs/common';
-import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
-import { TokenManagementService } from '../services/token-management.service';
+import { Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
 export class SmartChunkingService {
-  constructor(private readonly tokenManagement: TokenManagementService) {}
+  private readonly logger = new Logger(SmartChunkingService.name);
 
   /**
-   * Cắt văn bản lớn thành các chunk nhỏ hơn dựa trên Token sử dụng LangChain
-   * @param maxTokens Số token tối đa cho 1 chunk (chuẩn RAG thường là 500-1000)
-   * @param overlapTokens Số token gối đầu để giữ liên kết ngữ nghĩa giữa 2 chunk
+   * Băm nhỏ văn bản Markdown theo ngữ nghĩa (Tiêu đề, Đoạn văn)
    */
-  async chunkText(text: string, maxTokens: number = 500, overlapTokens: number = 50): Promise<string[]> {
-    if (!text || text.trim().length === 0) return [];
-
-    const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: maxTokens,
-      chunkOverlap: overlapTokens,
-      // Sử dụng TokenManagementService của bạn để đếm chính xác bằng cl100k_base
-      lengthFunction: (str) => this.tokenManagement.countTokens(str),
-      // Langchain sẽ ưu tiên cắt theo thứ tự này để giữ ngữ nghĩa
-      separators: ["\n\n", "\n", ".", "?", "!", " ", ""],
-    });
-
-    const documents = await splitter.createDocuments([text]);
+  async chunkText(markdownText: string): Promise<string[]> {
+    this.logger.log('Bắt đầu Semantic Chunking (Băm theo ngữ nghĩa Markdown)...');
     
-    // Trả về mảng các chuỗi text đã được chunk
-    return documents.map(doc => doc.pageContent);
+    // 1. Cắt văn bản theo các Tiêu đề Heading 2 và 3 (## hoặc ###)
+    // RegExp này tìm các dòng bắt đầu bằng ## hoặc ### và lấy nó làm điểm chia
+    const sections = markdownText.split(/(?=^##\s|^###\s)/m);
+    
+    const finalChunks: string[] = [];
+    const MAX_CHUNK_LENGTH = 1500; // Khoảng ~500 tokens
+    
+    for (const section of sections) {
+      const trimmedSection = section.trim();
+      if (!trimmedSection) continue;
+
+      // Nếu 1 section (chương) quá dài, cắt nhỏ tiếp theo đoạn văn (Double newline)
+      if (trimmedSection.length > MAX_CHUNK_LENGTH) {
+        const paragraphs = trimmedSection.split(/\n\n/);
+        let currentChunk = '';
+
+        for (const p of paragraphs) {
+          if ((currentChunk.length + p.length) < MAX_CHUNK_LENGTH) {
+            currentChunk += (currentChunk ? '\n\n' : '') + p;
+          } else {
+            if (currentChunk) finalChunks.push(currentChunk);
+            currentChunk = p;
+          }
+        }
+        if (currentChunk) finalChunks.push(currentChunk);
+      } else {
+        // Nếu section vừa vặn, giữ nguyên (Tối ưu nhất cho RAG)
+        finalChunks.push(trimmedSection);
+      }
+    }
+
+    this.logger.log(`Hoàn tất! Băm được ${finalChunks.length} chunks chất lượng cao.`);
+    return finalChunks;
   }
 }

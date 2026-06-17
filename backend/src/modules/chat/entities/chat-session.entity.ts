@@ -18,9 +18,15 @@ export class ChatSession {
   @Column({ type: 'enum', enum: SessionStatus, default: SessionStatus.ACTIVE })
   status: SessionStatus;
 
-  // Metadata để lưu trạng thái bài học (ví dụ: đang học Unit 1, Topic: Travel)
   @Column({ type: 'jsonb', nullable: true })
   learningContext: Record<string, any>;
+
+  // --- TÍNH NĂNG MỚI: GHIM VÀ CHIA SẺ ---
+  @Column({ name: 'is_pinned', type: 'boolean', default: false })
+  isPinned: boolean;
+
+  @Column({ name: 'share_token', type: 'varchar', length: 50, nullable: true, unique: true })
+  shareToken: string;
 
   @OneToMany(() => ChatMessage, message => message.session)
   messages: ChatMessage[];
@@ -30,4 +36,7 @@ export class ChatSession {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @Column({ type: 'jsonb', nullable: true })
+  metadata: Record<string, any>;
 }

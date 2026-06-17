@@ -10,7 +10,7 @@ export default registerAs('database', (): TypeOrmModuleOptions => ({
   database: process.env.DB_DATABASE || 'ai_learning_db',
   entities: [__dirname + '/../**/*.entity{.ts,.js}'],
   synchronize: process.env.NODE_ENV !== 'production', // Tự động sync schema ở môi trường dev
-  logging: process.env.NODE_ENV === 'development',
+  logging: ['error', 'warn'], // Chỉ in log khi có lỗi, bỏ in các câu query bình thường
   extra: {
     max: 20, // Tương đương với HikariCP connection pool trong Spring Boot
     idleTimeoutMillis: 30000,

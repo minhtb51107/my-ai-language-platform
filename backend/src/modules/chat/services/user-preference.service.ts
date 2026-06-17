@@ -120,4 +120,39 @@ export class UserPreferenceService {
       favoriteTopics: preference.favoriteTopics,
     };
   }
+
+  // ==========================================
+  // THÊM: 2 HÀM PHỤC VỤ CHO SETTINGS MODAL UI
+  // ==========================================
+  
+  async getPreferences(userId: string) {
+    // Tái sử dụng hàm có sẵn của bạn để đảm bảo luôn có data
+    const pref = await this.getOrCreateUserPreference(userId);
+    
+    // Ánh xạ lại tên biến ra giao diện cho khớp với Frontend (UI gửi dạng snake_case)
+    return {
+      id: pref.id,
+      communication_style: pref.communicationStyle,
+      detail_preference: pref.detailPreference,
+      learning_style: pref.learningStyle,
+    };
+  }
+
+  async updatePreferences(userId: string, updateData: any) {
+    const preference = await this.getOrCreateUserPreference(userId);
+
+    // Bắt dữ liệu từ Frontend truyền xuống (snake_case) và map vào Entity (camelCase)
+    if (updateData.communication_style) preference.communicationStyle = updateData.communication_style;
+    if (updateData.detail_preference) preference.detailPreference = updateData.detail_preference;
+    if (updateData.learning_style) preference.learningStyle = updateData.learning_style;
+
+    await this.preferenceRepo.save(preference);
+    
+    return {
+      id: preference.id,
+      communication_style: preference.communicationStyle,
+      detail_preference: preference.detailPreference,
+      learning_style: preference.learningStyle,
+    };
+  }
 }

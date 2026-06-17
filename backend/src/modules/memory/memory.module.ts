@@ -36,6 +36,6 @@ import { AiModule } from '../ai/ai.module';
     HierarchicalMemoryManager,
     HierarchicalMemoryProcessor // Thay thế cho .task cũ
   ],
-  exports: [MemoryService, TypeOrmModule],
+  exports: [MemoryService, TypeOrmModule, MemorySummaryManager],
 })
 export class MemoryModule {}

@@ -21,6 +21,12 @@ import { ConversationStateService } from './services/conversation-state.service'
 import { MemoryModule } from '../memory/memory.module';
 import { AiModule } from '../ai/ai.module';
 
+import { ChatController } from './controllers/chat.controller';
+import { FileController } from './controllers/file.controller';
+
+import { TokenManagementService } from '../ai/llm/token-management.service';
+import { ContextCompactionService } from './services/context-compaction.service';
+
 @Module({
   imports: [
     // Phải đăng ký TẤT CẢ các bảng liên quan đến Chat Domain
@@ -36,12 +42,15 @@ import { AiModule } from '../ai/ai.module';
     MemoryModule,
     AiModule,
   ],
+  controllers: [ChatController, FileController],
   providers: [
     ChatGateway, 
     ChatService,
     EmotionAnalysisService,
     UserPreferenceService,
-    ConversationStateService // Đăng ký luôn Service này phòng hờ dùng sau
+    ConversationStateService, // Đăng ký luôn Service này phòng hờ dùng sau
+    TokenManagementService,
+    ContextCompactionService
   ],
   exports: [ChatService],
 })

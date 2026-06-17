@@ -14,6 +14,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AiModule } from './modules/ai/ai.module';
 import { MemoryModule } from './modules/memory/memory.module';
 import { ChatModule } from './modules/chat/chat.module';
+import { UserModule } from './modules/user/user.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { ChatModule } from './modules/chat/chat.module';
     AiModule,
     MemoryModule,
     ChatModule,
+    UserModule
   ],
   providers: [],
 })

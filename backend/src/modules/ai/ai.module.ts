@@ -7,6 +7,7 @@ import { OpenAIService } from './llm/openai.service';
 // RAG Domain
 import { SmartChunkingService } from './rag/smart-chunking.service';
 import { CohereRerankService } from './rag/cohere-rerank.service';
+import { DocumentParserService } from './rag/document-parser.service'; // <-- THÊM DÒNG NÀY
 
 // Cache Domain
 import { SemanticCache } from './cache/semantic-cache.entity';
@@ -24,7 +25,7 @@ import { MemoryToolFactory } from './tools/memory.tool';
 import { AgentService } from './agents/agent.service';
 
 // Utilities
-import { TokenManagementService } from './services/token-management.service'; // (Có thể giữ lại trong services/ cũ)
+import { TokenManagementService } from './services/token-management.service';
 
 @Module({
   imports: [
@@ -34,10 +35,11 @@ import { TokenManagementService } from './services/token-management.service'; //
     OpenAIService,
     SmartChunkingService,
     CohereRerankService,
+    DocumentParserService, // <-- THÊM VÀO PROVIDERS
     SemanticCacheService,
     GuardrailService,
     EvaluationService,
-    MemoryToolFactory, // <-- Đăng ký Tool Factory
+    MemoryToolFactory,
     AgentService,
     TokenManagementService,
   ],
@@ -45,6 +47,7 @@ import { TokenManagementService } from './services/token-management.service'; //
     OpenAIService,
     SmartChunkingService,
     CohereRerankService,
+    DocumentParserService, // <-- THÊM VÀO EXPORTS ĐỂ CHATMODULE DÙNG ĐƯỢC
     SemanticCacheService,
     GuardrailService,
     EvaluationService,

@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { ChatSession } from './chat-session.entity';
 import { MessageRole } from '../chat.enums';
 
@@ -7,20 +7,26 @@ export class ChatMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => ChatSession, session => session.messages, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'session_id' })
-  session: ChatSession;
-
   @Column({ type: 'enum', enum: MessageRole })
   role: MessageRole;
 
-  @Column({ type: 'text' })
+  @Column({ type: 'text', nullable: true })
   content: string;
 
-  // Phân tích cảm xúc hoặc điểm số câu phát âm/ngữ pháp của người dùng
   @Column({ type: 'jsonb', nullable: true })
-  analysisResult: Record<string, any>;
+  analysisResult: any;
 
-  @CreateDateColumn({ name: 'created_at' })
-  createdAt: Date;
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  rating: 'like' | 'dislike' | null;
+
+  // THÊM: Cột JSONB để lưu danh sách file đính kèm (URL, name, type)
+  @Column({ type: 'jsonb', nullable: true })
+  attachments: any[];
+
+  @CreateDateColumn()
+  created_at: Date;
+
+  @ManyToOne(() => ChatSession, session => session.messages, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'session_id' })
+  session: ChatSession;
 }
